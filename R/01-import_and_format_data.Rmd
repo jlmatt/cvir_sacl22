@@ -1,0 +1,52 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(skimr)
+```
+
+# Import data
+
+We'll start by importing the final SalChal3 CSV file and doing some cleanup on the tibble. We're going to call October 12th 'Day 0', which is the day that the final salinities were reached.
+
+```{r}
+mort_dat3 <- read_csv("data/raw/salchal3_mortalities.csv") %>%
+  janitor::clean_names() %>%
+  mutate(tank = as.character(tank)) %>%
+  replace_na(list(death = "N")) %>%
+  mutate(mortality = case_when(death == "Y" ~ 1L,
+                               death == "N" ~ 0L,
+                               TRUE ~ NA_integer_)) %>%
+  filter(!is.na(treatment)) %>%
+  mutate(death_date = as.Date(death_date, format = "%m/%d/%Y")) %>%
+  mutate(day_of_death = as.integer(death_date - as.Date("2022-10-12"))) %>% # Day 0
+  mutate(length_mm = if_else(tag == "B706", NA_real_, length_mm)) # Fix length of one individual that died before measurement 
+
+skim(mort_dat3)
+```
+
+```{r}
+mean(mort_dat3$length_mm,na.rm = TRUE)
+```
+
+Now import the environmental data and do a little bit of cleanup:
+
+```{r}
+env_dat3 <- read_csv("data/raw/salchal3_env_data.csv") %>%
+  janitor::clean_names() %>%
+  rename(ph = p_h) %>%
+  mutate(date = as.Date(date, format = "%m/%d/%Y")) %>%
+  mutate(tank = as.character(tank))
+
+skim(env_dat3)
+```
+
+Now we can export both of the cleaned datasets as RDS files:
+
+```{r}
+
+write_rds(mort_dat3, here::here("data", "derived", "mort_dat_final.rds"))
+write_rds(env_dat3, here::here("data", "derived", "env_dat_final.rds"))
+
+```
+
+

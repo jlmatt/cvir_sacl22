@@ -1,0 +1,84 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ecotox)
+```
+
+upload data for figure
+
+```{r}
+mt_low_combined_lt50 <- readRDS(file=here::here("data","derived","03_low_combined_lt50")) %>%
+  mutate(treatment = "Low")
+
+mt_high_combined_lt50 <- readRDS(file=here::here("data","derived","03_high_combined_lt50")) %>%
+  mutate(treatment = "High")
+
+lt50 <- bind_rows(mt_low_combined_lt50,mt_high_combined_lt50) %>%
+  rename(Region = region)
+```
+
+```{r}
+lt50 <- lt50 %>%
+  mutate(treatment = factor(treatment, levels = c("Low","High")))
+```
+
+
+```{r}
+p1 <- ggplot(lt50, aes(x = Region, color = Region)) +
+  geom_point(aes(y = time)) +
+  geom_errorbar(aes(ymin = LCL, ymax = UCL), width = 0.25, linewidth = 1) +
+  facet_wrap(~ treatment) +
+  ylim(0, 23) +
+  labs(y = "LT50 in Days") + 
+  scale_color_hue(direction = -1) + 
+  theme(legend.position = "none") + 
+          theme_bw()+
+  theme(axis.text=element_text(size=11,color="black"),
+        axis.title=element_text(size=11)) +
+  #theme(axis.title.y = element_text(vjust=1.7))+
+  theme(panel.grid.major = element_blank())+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.border=element_blank())+
+  theme(axis.line = element_line(colour = "black"))+
+  theme(axis.title.y = element_text(vjust=1.7))+
+  theme(axis.title.x = element_text(vjust=-0.2))+
+  theme(plot.title = element_text(size=11,vjust=1.5))+
+  theme(legend.text=element_text(size=11))+
+  theme(plot.title=element_text(hjust=0.5))
+p1 <- p1 + theme( strip.background = element_blank() ) + theme(strip.text = element_text(size=11))
+
+p1
+```
+
+```{r}
+p1 <- ggplot(lt50, aes(x = treatment, color = Region)) +
+  geom_point(aes(y = time), size = 3) +   # increase point size (default ~2)
+  geom_errorbar(aes(ymin = LCL, ymax = UCL), 
+                width = 0.25, 
+                linewidth = 1.2) +        # increase line thickness
+  ylim(0, 22.4) +
+  labs(y = "LT50 in Days") + 
+  labs(x = "Treatment") +
+  scale_color_hue(direction = -1) + 
+  theme(legend.position = "none") + 
+  theme_bw() +
+  theme(axis.text=element_text(size=13,color="black"),
+        axis.title=element_text(size=13),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border=element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(vjust=1.7),
+        axis.title.x = element_text(vjust=-0.2),
+        plot.title = element_text(size=13,vjust=1.5,hjust=0.5),
+        legend.text=element_text(size=13),
+        legend.title = element_text(size = 13),
+        strip.background = element_blank(),
+        strip.text = element_text(size=16))
+p1
+```
+
+```{r}
+ggsave(here::here("out","fig","Fig3_LT50.png"), p1, width = 4, height = 5, units = "in")
+```
+

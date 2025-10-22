@@ -1,0 +1,78 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(gt)
+```
+
+Read in model data
+
+```{r}
+suc <-readRDS(file = here::here("data","derived","control_low_models_parameters")) %>%
+  rename(Model = Modnames, k = K) %>%
+  select(-ModelLik, -LL, -Cum.Wt, -Delta_AICc) 
+```
+
+Specify that models 5, 6, and 7 failed to converge
+
+```{r}
+failed_models <- read_csv(
+  "m5,--,--,--
+  m6,--,--,--
+  m7,--,--,--",
+  col_names = colnames(suc)
+) %>%
+  mutate(across(-Model, as.numeric))
+```
+
+Combine suc models and failed models
+
+```{r}
+data <- bind_rows(suc, failed_models) %>%
+  mutate(Model = c("m2", "m1","m4","m3","m5","m6","m7"))
+```
+
+Add in "variables" column after model column
+
+```{r}
+variables <- c("R + T",
+"R + T + S",
+"R + T + S + L",
+"R + T + S + L + G",
+"R + T + S + R x S",
+"R + T + S + R x S + L",
+"R + T + S + R x S + L + G") # this is in the order of m1,m2,m3...
+
+# arrange so it is in the order of the data : m5,m6,m1,m2,m3,m7,m4
+
+new_order <- c(2, 1, 4, 3, 5, 6, 7)
+variables <- variables[new_order]
+```
+
+```{r}
+data <- data %>%
+  mutate(Variables = variables) %>%
+  select(Model, Variables, everything()) %>%
+  mutate(AICc = round(AICc,digits=2)) %>%
+  mutate(AICcWt = round(AICcWt, digits = 3)) %>%
+   mutate(across(c(k, AICc, AICcWt), ~ if_else(is.na(.), "—", as.character(.))))
+```
+
+```{r}
+gt_tbl <- gt(data)
+t1 <- gt_tbl %>%
+cols_align(
+  align = "left",
+  columns = everything()
+) %>%
+  opt_horizontal_padding(scale=3)
+
+t1
+```
+
+Header: Table X: Parameters for coxme models (mi) corresponding to hypotheses about chance of survival.  k = number of parameters, including variance (σ2) as a parameter. AICc = corrected AIC value. AICcWt = model probability of fitting the observed data. 
+
+
+```{r}
+gtsave(t1, here::here("out","tbl","TableA4_low_control_models_parameters.png"))
+```
+

@@ -1,0 +1,68 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ecotox)
+```
+
+upload data for figure
+
+import the formatted mortality data:
+
+```{r}
+mort_dat <- read_rds(here::here("data", "derived", "mort_dat_final.rds"))
+```
+
+Create a new column in the data frame that is the group (e.g., ULM-1, NNP-2)
+
+```{r}
+mort_dat <- mort_dat %>%
+  mutate(group = str_sub(batch, end = -5)) %>%
+  select(tag,group,batch,everything())
+```
+
+Examine number of oysters for each group in experiment
+
+```{r}
+mort_dat %>%
+  group_by(group,growout_site)%>%
+  count() %>%
+  ungroup()
+
+mort_dat %>%
+  group_by(region,growout_site) %>%
+  count()
+
+125+164+136+161
+```
+
+
+Length by Group and Site
+
+```{r}
+p1 <- ggplot(mort_dat, aes(x=group, y=length_mm, group=interaction(group,growout_site),fill=growout_site)) + 
+  geom_boxplot(width=0.5)+
+  ylab("Shell length (mm)")+
+  ggtitle("")+
+  xlab("")+
+      theme_bw()+
+   theme(axis.text=element_text(size=13,color="black"),
+        axis.title=element_text(size=13),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border=element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(vjust=1.7),
+        axis.title.x = element_text(vjust=-0.2),
+        plot.title = element_text(size=13,vjust=1.5,hjust=0.5),
+        legend.text=element_text(size=13),
+        legend.title = element_text(size = 13),
+        strip.background = element_blank(),
+        strip.text = element_text(size=16))+
+  scale_fill_manual(values=c('gray100','gray80')) + 
+  labs(fill = "Grow-out site")
+p1
+```
+
+```{r}
+ggsave(here::here("out","fig","FigA2_size_by_group_site.png"), p1, width = 8, height = 5, units = "in")
+```

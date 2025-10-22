@@ -1,0 +1,135 @@
+---
+title: "best_models_table"
+author: "Joey Matt"
+date: "2023-06-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(gt)
+```
+
+Read in model data
+
+```{r}
+#Low
+data_fixed_L <-readRDS(file = here::here("data","derived","04_best_model_low_fixed_effects"))
+data_random_L <- readRDS(file = here::here("data","derived","04_best_model_low_random_effects"))
+
+#High
+data_fixed_H <-readRDS(file = here::here("data","derived","05_best_model_high_fixed_effects"))
+data_random_H <- readRDS(file = here::here("data","derived","05_best_model_high_random_effects"))
+
+#Control_Low
+data_fixed_CL <-readRDS(file = here::here("data","derived","06_best_model_control_low_fixed_effects"))
+data_random_CL <- readRDS(file = here::here("data","derived","06_best_model_control_low_random_effects"))
+
+#Control_High
+data_fixed_CH <-readRDS(file = here::here("data","derived","06_best_model_control_high_fixed_effects"))
+data_random_CH <- readRDS(file = here::here("data","derived","06_best_model_control_high_random_effects"))
+```
+
+Read in mortality and total data
+
+```{r}
+low_mort <- read_rds(file = here::here("data","derived","04_best_model_low_mort"))
+low_total <- read_rds(file = here::here("data","derived","04_best_model_low_total"))
+
+high_mort <- read_rds(file = here::here("data","derived","06_best_model_high_mort"))
+high_total <- read_rds(file = here::here("data","derived","06_best_model_high_total"))
+
+control_low_mort <- read_rds(file =
+                                   here::here(
+                                     "data","derived","06_best_model_control_low_mort"))
+control_low_total <- read_rds(file =
+                                   here::here(
+                                     "data","derived","06_best_model_control_low_total"))
+
+control_high_mort <-read_rds(file =
+                                   here::here(
+                                     "data","derived","06_best_model_control_high_mort"))
+control_high_total <- read_rds(file =
+                                   here::here(
+                                     "data","derived","06_best_model_control_high_total"))
+```
+
+```{r}
+#Low
+data_fixed_L <- data_fixed_L %>%
+  mutate(across(where(is.numeric), round, 2)) 
+#High
+data_fixed_H <- data_fixed_H %>%
+  mutate(across(where(is.numeric), round, 2)) 
+#Control_Low
+data_fixed_CL <- data_fixed_CL %>%
+  mutate(across(where(is.numeric), round, 2))
+#Control_High
+data_fixed_CH <- data_fixed_CH %>%
+  mutate(across(where(is.numeric), round, 2))
+```
+
+FIXED EFFECTS
+
+Maybe take out the estimate, std. error, conf, low, conf, high, just do the hazard ratios and be able to explain them
+
+```{r}
+#low
+data_fixed_L <- data_fixed_L %>%
+  select(term,HR,HR.conf.low,HR.conf.high,statistic,p.value) %>%
+  mutate(term = c("Region","Grow-Out Site","Length"))
+
+#High
+data_fixed_H <- data_fixed_H %>%
+  select(term,HR,HR.conf.low,HR.conf.high,statistic,p.value) %>%
+  mutate(term = c("Region","Grow-Out Site","Region x Grow Out Site"))
+
+data_fixed_CL <- data_fixed_CL %>%
+  select(term,HR,HR.conf.low,HR.conf.high,statistic,p.value) %>%
+  mutate(term = c("Region","Grow-Out Site"))
+
+data_fixed_CH <- data_fixed_CH %>%
+  select(term,HR,HR.conf.low,HR.conf.high,statistic,p.value) %>%
+  mutate(term = c("Region"))
+```
+
+Combine, put low on top
+
+```{r}
+data_fixed <- bind_rows(data_fixed_L,data_fixed_H,data_fixed_CL,data_fixed_CH) %>%
+  mutate(group = c("Low","Low","Low","High","High","High","Low Control","Low Control","High Control")) %>%
+  rename(`HR CIL` = HR.conf.low, `HR CIH` = HR.conf.high, z = statistic, `p` = p.value) %>%
+  mutate(group = case_when(
+    group == "Low" ~ "Low   (mort = 147, total = 191)",
+    group == "High" ~ "High   (mort = 138, total = 153)",
+    group == "Low Control" ~ "Low Control   (mort = 10, total = 194)",
+    group == "High Control" ~ "High Control   (mort = 22, total = 194)"
+  ))
+```
+
+Make Table
+
+
+```{r}
+t1<-data_fixed %>%
+ gt(groupname_col = "group",rowname_col = "term") %>%
+   cols_label(p = html("<i>p</i>"),z = html("<i>z</i>")) %>%
+cols_align(
+  align = "left",
+  columns = everything()
+) %>%
+  tab_stub_indent(
+    rows = everything(),
+    indent = 3
+  ) %>%
+   tab_stubhead(label = "Term") %>%
+  opt_horizontal_padding(scale=3)
+t1
+```
+
+```{r}
+gtsave(t1, here::here("out","tbl","Table4_best_models_fixed_effects.png"))
+```
+
+

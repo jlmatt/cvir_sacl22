@@ -1,0 +1,51 @@
+Make figure for salinity at hatchery during rearing of seed at hatchery on unfiltered water
+
+```{r}
+library(here)
+library(tidyverse)
+library(googledrive)
+library(readxl)
+```
+
+```{r}
+data <- read_xlsx(here::here("data","raw","hatchery_salinity.xlsx")) %>%
+  mutate(date2 = as.Date(date))
+```
+
+```{r}
+p1<-ggplot(data, aes(x = date2, y = salinity)) + 
+  geom_point() +
+  ylim(20,40) +
+  xlab("") +
+  ylab ("Salinity")+ 
+  scale_x_date(
+    date_breaks = "1 month",
+    labels = function(x) {
+      # format as "Jan\n2023" for January, otherwise just "Feb", "Mar", etc.
+      ifelse(format(x, "%m") == "01",
+             paste0(format(x, "%b"), "\n", format(x, "%Y")),
+             format(x, "%b"))
+    },
+    expand = c(0, 0),
+    limits = as.Date(c("2021-07-15", "2022-06-15"))
+  ) + 
+        theme_bw()+
+   theme(axis.text=element_text(size=13,color="black",lineheight = 1.1),
+        axis.title=element_text(size=13),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border=element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(vjust=1.7),
+        axis.title.x = element_text(vjust=-0.2),
+        plot.title = element_text(size=13,vjust=1.5,hjust=0.5),
+        legend.text=element_text(size=13),
+        legend.title = element_text(size = 13),
+        legend.position = "none")
+p1
+```
+
+```{r}
+ggsave(here::here("out","fig","FigA1_hatchery_salinity.png"), p1, width = 8, height = 5, units = "in")
+```
+

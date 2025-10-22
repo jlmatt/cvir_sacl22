@@ -1,0 +1,234 @@
+---
+title: "raw survival curve for low, control, and high salinity in one graph"
+author: "Joey"
+date: "2023-06-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ecotox)
+```
+
+upload low data, control data, and high data for figure
+
+```{r}
+data <- readRDS(file=here::here("data","derived","03_low_raw_mortality"))
+```
+
+```{r}
+data <- data %>%
+  rename(Region = region)
+```
+
+Need to make a dummy variable so that survival starts at 0
+
+```{r}
+template <- data[2,]
+```
+
+
+```{r}
+# Define a list of specifications
+specs <- list(
+  c(Region = "N", tank = 1),
+  c(Region = "S", tank = 1),
+  c(Region = "N", tank = 4),
+  c(Region = "N", tank = 4),
+  c(Region = "S", tank = 7),
+  c(Region = "N", tank = 7),
+  c(Region = "N", tank = 9),
+  c(Region = "S", tank = 9))
+
+# Create a list of data frames
+templates <- lapply(specs, function(spec) {
+template %>%
+    mutate(Region = spec["Region"], tank = spec["tank"], day_of_death = -9, prop_cm_mort = 0)
+})
+
+combined_tibble <- bind_rows(templates)
+```
+
+```{r}
+low_data <- bind_rows(combined_tibble,data)
+```
+
+upload highdata for figure
+
+```{r}
+data <- readRDS(file=here::here("data","derived","03_high_raw_mortality"))
+```
+
+```{r}
+template <- data[2,]
+```
+
+Need to make a dummy variable so that survival starts at 0
+
+```{r}
+# Define a list of specifications
+specs <- list(
+  c(region = "N", tank = 2),
+  c(region = "S", tank = 2),
+  c(region = "N", tank = 5),
+  c(region = "S", tank = 5),
+  c(region = "N", tank = 6),
+  c(region = "S", tank = 6),
+  c(region = "N", tank = 11),
+  c(region = "S", tank = 11))
+
+# Create a list of data frames
+templates <- lapply(specs, function(spec) {
+template %>%
+    mutate(region = spec["region"], tank = spec["tank"], day_of_death = -9, prop_cm_mort = 0)
+})
+
+combined_tibble <- bind_rows(templates)
+```
+
+```{r}
+high_data <- bind_rows(combined_tibble,data)
+```
+
+Upload control data
+
+```{r}
+data <- readRDS(file=here::here("data","derived","03_con_raw_mortality"))
+```
+
+```{r}
+template <- data[2,]
+```
+
+Need to make a dummy variable so that survival starts at 0
+
+```{r}
+# Define a list of specifications
+specs <- list(
+  c(region = "N", tank = 3),
+  c(region = "S", tank = 3),
+  c(region = "N", tank = 8),
+  c(region = "S", tank = 8),
+  c(region = "N", tank = 10),
+  c(region = "S", tank = 10),
+  c(region = "N", tank = 12),
+  c(region = "S", tank = 12))
+
+# Create a list of data frames
+templates <- lapply(specs, function(spec) {
+template %>%
+    mutate(region = spec["region"], tank = spec["tank"], day_of_death = -9, prop_cm_mort = 0)
+})
+
+combined_tibble <- bind_rows(templates)
+```
+
+```{r}
+con_data <- bind_rows(combined_tibble,data)
+```
+
+
+```{r}
+low_data <- low_data %>% 
+  mutate(region = Region) %>% 
+  mutate(treatment = "low") %>%
+  filter(day_of_death < 10)
+
+con_data <- con_data %>%
+  mutate(treatment = "control")
+
+high_data <- high_data %>%
+  mutate(treatment = "high")
+```
+
+```{r}
+data<- bind_rows(low_data, con_data, high_data)
+
+data <- data %>%
+  mutate(treatment = factor(treatment, levels = c("low","high","control")))
+```
+
+```{r}
+p1 <- ggplot(data, aes(x = day_of_death, y = 1 - prop_cm_mort, linetype = tank, color = region, group = interaction(tank, region))) +
+    geom_line(size = 0.8) +   # increase line thickness
+  facet_wrap(~treatment, nrow = 1, labeller = labeller(treatment = c(low = "Low",high = "High", control = "Control"))) +
+  ylab("Proportion Cumulative Survival") +
+  xlab("Day of Trial") + 
+  scale_color_hue(direction = -1) +
+  xlim(-9, 25)+
+  guides(linetype = "none") + 
+  labs(color = "Region") +
+        theme_bw()+
+  theme(axis.text=element_text(size=13,color="black"),
+        axis.title=element_text(size=13)) +
+  #theme(axis.title.y = element_text(vjust=1.7))+
+  theme(panel.grid.major = element_blank())+
+  theme(panel.grid.minor = element_blank())+
+  theme(panel.border=element_blank())+
+  theme(axis.line = element_line(colour = "black"))+
+  theme(axis.title.y = element_text(vjust=1.7))+
+  theme(axis.title.x = element_text(vjust=-0.2))+
+  theme(plot.title = element_text(size=13,vjust=1.5))+
+  theme(legend.text=element_text(size=13))+
+  theme(plot.title=element_text(hjust=0.5))
+p1 <- p1 + theme( strip.background = element_blank() ) + theme(strip.text = element_text(size=16))
+p1
+```
+
+```{r}
+avg <- data %>%
+  group_by(region, day_of_death, treatment) %>%
+  summarize(mean_cm = mean(prop_cm_mort)) %>%
+  filter(!day_of_death > 20) %>%
+  filter(!(treatment == "low" & day_of_death > 8))
+```
+
+
+```{r}
+p1 <- ggplot() +
+  geom_line(data = data,
+            aes(x = day_of_death,
+                y = 1 - prop_cm_mort,
+                color = region,
+                group = interaction(tank, region)),
+            linetype = "dotted",
+            size = 0.6) +
+
+  # treatment-level averages
+  geom_line(data = avg,
+            aes(x = day_of_death,
+                y = 1 - mean_cm,
+                color = region,
+                group = region),
+            size = 1.2) +
+
+  facet_wrap(~treatment, nrow = 1,
+             labeller = labeller(treatment = c(low = "Low",
+                                              high = "High",
+                                              control = "Control"))) +
+  ylab("Cumulative Survival") +
+  xlab("Day of Trial") + 
+  scale_color_hue(direction = -1) +
+  xlim(-9, 25) +
+  labs(color = "Region") +
+  theme_bw() +
+  theme(axis.text=element_text(size=13,color="black"),
+        axis.title=element_text(size=13),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border=element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(vjust=1.7),
+        axis.title.x = element_text(vjust=-0.2),
+        plot.title = element_text(size=13,vjust=1.5,hjust=0.5),
+        legend.text=element_text(size=13),
+        legend.title = element_text(size = 13),
+        strip.background = element_blank(),
+        strip.text = element_text(size=14))
+p1
+```
+
+```{r, eval = FALSE}
+ggsave(here::here("out","fig","Fig2_all_raw_curves.png"), p1, width = 7, height = 5, units = "in")
+```

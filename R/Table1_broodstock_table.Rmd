@@ -1,0 +1,52 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(gt)
+```
+
+```{r}
+data <- readRDS(file = here::here("data","raw","spawndata_2021"))
+```
+
+```{r}
+test <- data %>% 
+  filter(group %in% (c("NN-3","NNP-2","NNP-3","ULM-1","ULM-3","PAC-1"))) %>%
+  mutate(sex = str_sub(day_id, -1, -1)) %>%
+  mutate(site = str_sub(day_id, 1, 3)) %>%
+  group_by(group,sex,site) %>%
+  count() %>%
+  ungroup()
+
+table <- test %>%
+  pivot_wider(names_from = sex,values_from = n) %>%
+  rename(origin = site) %>%
+  rename(dam = F, sire = M) %>%
+  mutate(origin2 = if_else(origin == "NTX","GLV & MGB  ",origin)) %>%
+  select(group,origin2,dam,sire) %>%
+  rename(origin = origin2) %>%
+  rename(Group = group, Origin = origin, Dams = dam, Sires = sire)
+table
+```
+
+```{r}
+table <- table %>%
+  mutate(Region = c("N","N","N","S","S","S")) %>%
+  mutate(`Spawn Date` = c ("07/13/2021","07/28/2021","07/28/2021","07/13/2021","07/13/2021","07/28/2021")) %>%
+  select(Group,Region,everything())
+```
+
+```{r}
+gt_tbl <- gt(table)
+t1 <- gt_tbl %>%
+cols_align(
+  align = "left",
+  columns = everything()
+) %>%
+  opt_horizontal_padding(scale=2.5)
+t1
+```
+
+```{r}
+gtsave(t1, here::here("out","tbl","Table1_broodstock_table.png"))
+```

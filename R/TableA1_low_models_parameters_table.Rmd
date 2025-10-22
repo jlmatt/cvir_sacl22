@@ -1,0 +1,72 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(gt)
+```
+
+Read in model data
+
+```{r}
+data <-readRDS(file = here::here("data","derived","low_models_parameters")) %>%
+  rename(Model = Modnames, k = K) %>%
+  select(-ModelLik, -LL, -Cum.Wt, -Delta_AICc) %>%
+  mutate(Model = c("m3", "m6","m4","m7","m5","m1","m2"))
+```
+
+
+Add in "variables" column after model column
+
+```{r}
+variables <- c("R + T",
+"R + T + S",
+"R + T + S + L",
+"R + T + S + L + G",
+"R + T + S + R x S",
+"R + T + S + R x S + L",
+"R + T + S + R x S + L + G") # this is in the order of m1,m2,m3...
+
+# arrange so it is in the order of the data : m3,m6,m4,m7,m5,m1,m2
+
+new_order <- c(3, 6, 4, 7, 5, 1, 2)
+variables <- variables[new_order]
+```
+
+```{r}
+data <- data %>%
+  mutate(Variables = variables) %>%
+  select(Model, Variables, everything()) %>%
+  mutate(AICc = round(AICc,digits=2)) %>%
+  mutate(AICcWt = round(AICcWt, digits = 2))
+
+str(data)
+```
+
+```{r}
+gt_tbl <- gt(data)
+#gt_tbl %>% 
+  #tab_spanner(
+    #label = "Table _: Parameters for coxme models corresponding to hypotheses about chance of survival.  k = number of parameters, including variance (σ2) as a parameter. AICc = corrected AIC value. AICcWt = model probability of fitting the observed data. R: Region, T: Tank, S: Site, L: Length, G: Group",
+    #columns = everything()  # You can specify columns here
+  #)
+t1 <- gt_tbl %>%
+    tab_style(
+        style = "padding-right:20px",
+        locations = cells_column_labels()
+        ) %>%
+cols_align(
+  align = "left",
+  columns = everything()
+) %>%
+  opt_horizontal_padding(scale=3)
+
+t1
+```
+
+Header: Table X: Parameters for coxme models (mi) corresponding to hypotheses about chance of survival.  k = number of parameters, including variance (σ2) as a parameter. AICc = corrected AIC value. AICcWt = model probability of fitting the observed data. 
+
+R: Region, T: Tank, S: Site, L: Length, G: Group
+
+```{r}
+gtsave(t1, here::here("out","tbl","TableA1_low_models_parameters.png"))
+```
+

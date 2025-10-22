@@ -1,0 +1,675 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ecotox)
+```
+
+# Import
+
+Import the formatted mortality data:
+
+```{r}
+mort_dat <- read_rds(here::here("data", "derived", "mort_dat_final.rds"))
+```
+
+# Low salinity
+
+## Grouping by region and tank
+
+Format it to be processed with the ecotox framework. First, we need to make an expanded grid of all region/tank observations to fill in zero-mort days. This will allow us to make a tibble that has a row reflecting the cumulative mortality each day for every tank, even if there were no recorded mortalities for that day.
+
+```{r}
+all_region_tank <- mort_dat %>%
+  mutate(day_of_death = factor(day_of_death, levels = as.character(-8:23))) %>%
+  expand(region, tank, day_of_death)
+```
+
+Now create a tibble for the low treatment 
+
+```{r}
+mt_low <- mort_dat %>%
+  filter(treatment == "L") %>%
+  group_by(region, tank, death, day_of_death) %>%
+  count(name = "n_morts") %>%
+  mutate(day_of_death = factor(day_of_death, levels = as.character(-8:23))) %>%
+  right_join(all_region_tank, by = join_by(region, tank, day_of_death)) %>%
+  arrange(region, tank, day_of_death) %>%
+  replace_na(list(death = "Y", n_morts = 0)) %>%
+  ungroup() %>%
+  group_by(region, tank) %>%
+  mutate(n_group = sum(n_morts)) %>%
+  filter(n_group > 0) %>%
+  filter(!is.na(day_of_death)) %>%
+  mutate(cm_mort = cumsum(n_morts),
+         prop_mort = n_morts / n_group,
+         prop_cm_mort = cm_mort / n_group) %>%
+  ungroup() %>%
+  mutate(day_of_death = as.integer(as.character(day_of_death)))
+
+```
+
+Just to check, this tibble should have 256 rows (2 regions x 4 tanks x 32 days):
+
+```{r}
+nrow(mt_low)
+```
+
+Plot the mortality curves:
+
+```{r}
+ggplot(mt_low, aes(x = day_of_death, y = prop_cm_mort, color = region)) +
+  geom_line() +
+  facet_wrap(~tank)
+```
+
+This is the mortality curve across the entire LOW challenge.
+
+Save the data used to make this plot so it can be in its own markdown.
+
+```{r}
+saveRDS(mt_low, file = here::here("data","derived","03_low_raw_mortality"))
+```
+
+For the purposes of calculating the LT50, we want to start from the time following acclimation (Day 0). To do this, we need to remove mortality observations prior to day 0 and recalculate the cumulative mortality. For the analysis to run properly, the first day needs to be day 1 (the below code failed when zero was included), so we're adding one to all of the days.
+
+```{r}
+mt_low_post_accl <- mt_low %>%
+  filter(day_of_death >= 0) %>%
+  filter(day_of_death < 9) %>% #treatment terminated nine days after start (0,1,2,3,4,5,6,7,8 are the nine days)
+  group_by(region, tank) %>%
+  mutate(cm_mort = cumsum(n_morts),
+         prop_mort = n_morts / n_group,
+         prop_cm_mort = cm_mort / n_group) %>%
+  mutate(day_of_death = day_of_death + 1) %>%
+  ungroup()
+```
+
+```{r}
+qplot(mt_low_post_accl$prop_cm_mort,log10(mt_low_post_accl$day_of_death))
+qplot(log10(mt_low_post_accl$day_of_death))
+```
+
+Now calculate the LT50 for each tank/region combination. This loops through all tank/region combinations and runs the LT_probit() analysis. 
+
+```{r}
+mt_low_lt50 <- mt_low_post_accl %>%
+  group_by(tank, region) %>%
+  nest() %>%
+  mutate(lt_res = map(data, function(x) {
+  
+  # Run the analysis with each tank/region combination
+    LT_logit((cm_mort / n_group) ~ log10(day_of_death),
+      p = c(50),
+      weights = n_group,
+      data = x) %>%
+    mutate(tank = tank, region = region) %>%
+    select(tank, region, everything())
+    
+  })) %>%
+  pull(lt_res) %>%
+  bind_rows()
+```
+
+Have a look at a summary of the results:
+
+```{r}
+ggplot(mt_low_lt50, aes(x = tank, color = region)) +
+  geom_point(aes(y = time)) +
+  geom_errorbar(aes(ymin = LCL, ymax = UCL), width = 0.25, linewidth = 1) +
+  ylim(0, 10) +
+  labs(y = "LT50")
+```
+
+This is the LT50 per each tank across the entire LOW challenge.
+
+Save the data used to make this plot so it can be in its own markdown.
+
+```{r}
+saveRDS(mt_low_lt50, file = here::here("data","derived","03_low_lt50"))
+```
+
+## Grouping by region only
+
+Given these results, we could also try to get an overall LT50 by region alone by combining the cumulative mortality data across replicates:
+
+```{r}
+mt_low_by_region <- mt_low %>%
+  filter(day_of_death >= 0) %>%
+  filter(day_of_death < 9) %>% #treatment terminated nine days after start (0,1,2,3,4,5,6,7,8 are the nine days)
+  #filter(!tank == 7) %>%
+  group_by(region, day_of_death) %>%
+  summarise(all_morts = sum(n_morts), total_n = sum(n_group)) %>%
+  mutate(cm_mort = cumsum(all_morts),
+         prop_mort = all_morts / total_n,
+         prop_cm_mort = cm_mort / total_n) %>%
+  mutate(day_of_death = day_of_death + 1) %>%
+  ungroup()
+```
+
+Now calculate the LT50:
+
+```{r}
+mt_low_combined_lt50 <- mt_low_by_region %>%
+  group_by(region) %>%
+  nest() %>%
+  mutate(lt_res = map(data, function(x) {
+  
+  # Run the analysis with each tank/region combination
+    LT_logit((cm_mort / total_n) ~ log10(day_of_death),
+      p = c(50),
+      weights = total_n,
+      data = x) %>%
+    mutate(region = region) %>%
+    select(region, everything())
+    
+  })) %>%
+  pull(lt_res) %>%
+  bind_rows()
+```
+
+Have a look at a summary of the results:
+
+```{r}
+ggplot(mt_low_combined_lt50, aes(x = region, color = region)) +
+  geom_point(aes(y = time)) +
+  geom_errorbar(aes(ymin = LCL, ymax = UCL), width = 0.25, linewidth = 1) +
+  ylim(0, 30) +
+  labs(y = "LT50")
+```
+
+Save the data used to make this plot so it can be in its own markdown.
+
+```{r}
+saveRDS(mt_low_combined_lt50, file = here::here("data","derived","03_low_combined_lt50"))
+```
+
+# High salinity
+
+Now let's repeat this with the high salinity data:
+
+## Grouping by region and tank
+
+```{r}
+all_region_tank <- mort_dat %>%
+  mutate(day_of_death = factor(day_of_death, levels = as.character(-8:23))) %>%
+  expand(region, tank, day_of_death)
+```
+
+Now create a tibble for the high treatment 
+
+```{r}
+mt_high <- mort_dat %>%
+  filter(treatment == "H") %>%
+  group_by(region, tank, death, day_of_death) %>%
+  count(name = "n_morts") %>%
+  mutate(day_of_death = factor(day_of_death, levels = as.character(-8:23))) %>%
+  right_join(all_region_tank, by = join_by(region, tank, day_of_death)) %>%
+  arrange(region, tank, day_of_death) %>%
+  replace_na(list(death = "Y", n_morts = 0)) %>%
+  ungroup() %>%
+  group_by(region, tank) %>%
+  mutate(n_group = sum(n_morts)) %>%
+  filter(n_group > 0) %>%
+  filter(!is.na(day_of_death)) %>%
+  mutate(cm_mort = cumsum(n_morts),
+         prop_mort = n_morts / n_group,
+         prop_cm_mort = cm_mort / n_group) %>%
+  ungroup() %>%
+  mutate(day_of_death = as.integer(as.character(day_of_death)))
+
+
+```
+
+Just to check, this tibble should have 256 rows (2 regions x 4 tanks x 32 days):
+
+```{r}
+nrow(mt_high)
+```
+
+Plot the mortality curves:
+
+```{r}
+ggplot(mt_high, aes(x = day_of_death, y = prop_cm_mort, color = region)) +
+  geom_line() +
+  facet_wrap(~tank)
+```
+
+This is the raw mortality curve for high treatment.
+
+Save the data used to make this plot so it can be in its own markdown.
+
+```{r}
+saveRDS(mt_high, file = here::here("data","derived","03_high_raw_mortality"))
+```
+
+```{r}
+mt_high_post_accl <- mt_high %>%
+  filter(day_of_death >= 0) %>%
+  filter(day_of_death < 21) %>%
+  group_by(region, tank) %>%
+  mutate(cm_mort = cumsum(n_morts),
+         prop_mort = n_morts / n_group,
+         prop_cm_mort = cm_mort / n_group) %>%
+  mutate(day_of_death = day_of_death + 1) %>%
+  ungroup()
+```
+
+Now calculate the LT50 for each tank/region combination. This loops through all tank/region combinations and runs the LT_probit() analysis. 
+
+```{r}
+mt_high_lt50 <- mt_high_post_accl %>%
+  group_by(tank, region) %>%
+  nest() %>%
+  mutate(lt_res = map(data, function(x) {
+  
+  # Run the analysis with each tank/region combination
+    LT_logit((cm_mort / n_group) ~ log10(day_of_death),
+      p = c(50),
+      weights = n_group,
+      data = x) %>%
+    mutate(tank = tank, region = region) %>%
+    select(tank, region, everything())
+    
+  })) %>%
+  pull(lt_res) %>%
+  bind_rows()
+```
+
+Have a look at a summary of the results:
+
+```{r}
+ggplot(mt_high_lt50, aes(x = tank, color = region)) +
+  geom_point(aes(y = time)) +
+  geom_errorbar(aes(ymin = LCL, ymax = UCL), width = 0.25, linewidth = 1) +
+  ylim(0, 30) +
+  labs(y = "LT50")
+```
+
+This is the lt50 for high treatment by tank.
+
+Save the data used to make this plot so it can be in its own markdown.
+
+```{r}
+saveRDS(mt_high_lt50, file = here::here("data","derived","03_high_lt50"))
+```
+
+
+## Grouping by region only
+
+```{r}
+
+mt_high_by_region <- mt_high %>%
+  filter(day_of_death >= 0) %>%
+  filter(day_of_death < 21) %>%
+  group_by(region, day_of_death) %>%
+  summarise(all_morts = sum(n_morts), total_n = sum(n_group)) %>%
+  mutate(cm_mort = cumsum(all_morts),
+         prop_mort = all_morts / total_n,
+         prop_cm_mort = cm_mort / total_n) %>%
+  mutate(day_of_death = day_of_death + 1) %>%
+  ungroup()
+
+```
+
+Now calculate the LT50:
+
+```{r}
+mt_high_combined_lt50 <- mt_high_by_region %>%
+  group_by(region) %>%
+  nest() %>%
+  mutate(lt_res = map(data, function(x) {
+  
+  # Run the analysis with each tank/region combination
+    LT_logit((cm_mort / total_n) ~ log10(day_of_death),
+      p = c(50),
+      weights = total_n,
+      data = x) %>%
+    mutate(region = region) %>%
+    select(region, everything())
+    
+  })) %>%
+  pull(lt_res) %>%
+  bind_rows()
+```
+
+Have a look at a summary of the results:
+
+```{r}
+ggplot(mt_high_combined_lt50, aes(x = region, color = region)) +
+  geom_point(aes(y = time)) +
+  geom_errorbar(aes(ymin = LCL, ymax = UCL), width = 0.25, linewidth = 1) +
+  ylim(0, 30) +
+  labs(y = "LT50")
+
+```
+
+This is the lt50 by region (north/south).
+
+Save the data used to make this plot so it can be in its own markdown.
+
+```{r}
+saveRDS(mt_high_combined_lt50, file = here::here("data","derived","03_high_combined_lt50"))
+```
+
+
+# Control
+
+Now create a tibble for the control treatment 
+
+```{r}
+mt_con <- mort_dat %>%
+  filter(treatment == "C") %>%
+  group_by(region, tank, death, day_of_death) %>%
+  count(name = "n_morts") %>%
+  mutate(day_of_death = factor(day_of_death, levels = as.character(-9:23))) %>%
+  right_join(all_region_tank, by = join_by(region, tank, day_of_death)) %>%
+  arrange(region, tank, day_of_death) %>%
+  replace_na(list(death = "Y", n_morts = 0)) %>%
+  ungroup() %>%
+  group_by(region, tank) %>%
+  mutate(n_group = sum(n_morts)) %>%
+  filter(n_group > 0) %>%
+  filter(!is.na(day_of_death)) %>%
+  mutate(cm_mort = cumsum(n_morts),
+         prop_mort = n_morts / n_group,
+         prop_cm_mort = cm_mort / n_group) %>%
+  ungroup() %>%
+  mutate(day_of_death = as.integer(as.character(day_of_death)))
+```
+
+Just to check, this tibble should have 256 rows (2 regions x 4 tanks x 32 days):
+
+```{r}
+nrow(mt_con)
+```
+
+Plot the mortality curves:
+
+```{r}
+ggplot(mt_con, aes(x = day_of_death, y = prop_cm_mort, color = region)) +
+  geom_line() +
+  facet_wrap(~tank)
+```
+
+This is the mortality curve across the entire CONTROL challenge.
+
+Save the data used to make this plot so it can be in its own markdown.
+
+```{r}
+saveRDS(mt_con, file = here::here("data","derived","03_con_raw_mortality"))
+```
+
+
+# Control Low
+
+For the purposes of calculating the LT50, we want to start from the time following acclimation (Day 0). To do this, we need to remove mortality observations prior to day 0 and recalculate the cumulative mortality. For the analysis to run properly, the first day needs to be day 1 (the below code failed when zero was included), so we're adding one to all of the days.
+
+Need to make day 13 be the last day on here to match with the low treatment
+
+```{r}
+mt_con_post_accl <- mt_con %>%
+  filter(day_of_death >= 0) %>%
+  filter(day_of_death < 9) %>%
+  group_by(region, tank) %>%
+  mutate(cm_mort = cumsum(n_morts),
+         prop_mort = n_morts / n_group,
+         prop_cm_mort = cm_mort / n_group) %>%
+  mutate(day_of_death = day_of_death + 1) %>%
+  ungroup()
+```
+
+```{r}
+qplot(mt_con_post_accl$prop_cm_mort,log10(mt_con_post_accl$day_of_death))
+qplot(log10(mt_con_post_accl$day_of_death))
+```
+
+Now calculate the LT50 for each tank/region combination. This loops through all tank/region combinations and runs the LT_probit() analysis. 
+
+```{r}
+mt_con_lt50 <- mt_con_post_accl %>%
+  group_by(tank, region) %>%
+  nest() %>%
+  mutate(lt_res = map(data, function(x) {
+  
+  # Run the analysis with each tank/region combination
+    LT_logit((cm_mort / n_group) ~ log10(day_of_death),
+      p = c(50),
+      weights = n_group,
+      data = x) %>%
+    mutate(tank = tank, region = region) %>%
+    select(tank, region, everything())
+    
+  })) %>%
+  pull(lt_res) %>%
+  bind_rows()
+```
+
+Have a look at a summary of the results:
+
+```{r}
+ggplot(mt_con_lt50, aes(x = tank, color = region)) +
+  geom_point(aes(y = time)) +
+  geom_errorbar(aes(ymin = LCL, ymax = UCL), width = 0.25, linewidth = 1) +
+  ylim(0, 20) +
+  labs(y = "LT50")
+```
+
+This is the LT50 per each tank across the entire CONTROL challenge.
+
+## Grouping by region only
+
+Given these results, we could also try to get an overall LT50 by region alone by combining the cumulative mortality data across replicates:
+
+```{r}
+mt_con_by_region <- mt_con %>%
+  filter(day_of_death >= 0) %>%
+  filter(day_of_death < 9) %>%
+  #filter(!tank ==7) %>%
+  group_by(region, day_of_death) %>%
+  summarise(all_morts = sum(n_morts), total_n = sum(n_group)) %>%
+  mutate(cm_mort = cumsum(all_morts),
+         prop_mort = all_morts / total_n,
+         prop_cm_mort = cm_mort / total_n) %>%
+  mutate(day_of_death = day_of_death + 1) %>%
+  ungroup()
+```
+
+Now calculate the LT50:
+
+```{r}
+mt_con_combined_lt50 <- mt_con_by_region %>%
+  group_by(region) %>%
+  nest() %>%
+  mutate(lt_res = map(data, function(x) {
+  
+  # Run the analysis with each tank/region combination
+    LT_logit((cm_mort / total_n) ~ log10(day_of_death),
+      p = c(50),
+      weights = total_n,
+      data = x) %>%
+    mutate(region = region) %>%
+    select(region, everything())
+    
+  })) %>%
+  pull(lt_res) %>%
+  bind_rows()
+```
+
+Have a look at a summary of the results:
+
+```{r}
+ggplot(mt_con_combined_lt50, aes(x = region, color = region)) +
+  geom_point(aes(y = time)) +
+  geom_errorbar(aes(ymin = LCL, ymax = UCL), width = 0.25, linewidth = 1) +
+  ylim(0, 4000) +
+  labs(y = "LT50")
+```
+
+This is the LT50 summarized by region (north/south) for the low control
+
+Save the data used to make this plot so it can be in its own markdown.
+
+```{r}
+saveRDS(mt_con_combined_lt50, file = here::here("data","derived","03_low_con_combined_lt50"))
+```
+
+# Control High
+
+For the purposes of calculating the LT50, we want to start from the time following acclimation (Day 0). To do this, we need to remove mortality observations prior to day 0 and recalculate the cumulative mortality. For the analysis to run properly, the first day needs to be day 1 (the below code failed when zero was included), so we're adding one to all of the days.
+
+```{r}
+mt_con_post_accl <- mt_con %>%
+  filter(day_of_death >= 0) %>%
+  filter(day_of_death < 21) %>%
+  group_by(region, tank) %>%
+  mutate(cm_mort = cumsum(n_morts),
+         prop_mort = n_morts / n_group,
+         prop_cm_mort = cm_mort / n_group) %>%
+  mutate(day_of_death = day_of_death + 1) %>%
+  ungroup()
+```
+
+```{r}
+qplot(mt_con_post_accl$prop_cm_mort,log10(mt_con_post_accl$day_of_death))
+qplot(log10(mt_con_post_accl$day_of_death))
+```
+
+
+Now calculate the LT50 for each tank/region combination. This loops through all tank/region combinations and runs the LT_probit() analysis. 
+
+```{r}
+mt_con_lt50 <- mt_con_post_accl %>%
+  group_by(tank, region) %>%
+  nest() %>%
+  mutate(lt_res = map(data, function(x) {
+  
+  # Run the analysis with each tank/region combination
+    LT_logit((cm_mort / n_group) ~ log10(day_of_death),
+      p = c(50),
+      weights = n_group,
+      data = x) %>%
+    mutate(tank = tank, region = region) %>%
+    select(tank, region, everything())
+    
+  })) %>%
+  pull(lt_res) %>%
+  bind_rows()
+```
+
+Have a look at a summary of the results:
+
+```{r}
+ggplot(mt_con_lt50, aes(x = tank, color = region)) +
+  geom_point(aes(y = time)) +
+  geom_errorbar(aes(ymin = LCL, ymax = UCL), width = 0.25, linewidth = 1) +
+  ylim(0, 20) +
+  labs(y = "LT50")
+```
+
+This is the LT50 per each tank across the entire CONTROL challenge.
+
+Save the data used to make this plot so it can be in its own markdown.
+
+```{r}
+saveRDS(mt_con_lt50, file = here::here("data","derived","03_con_lt50"))
+```
+
+## Grouping by region only
+
+Given these results, we could also try to get an overall LT50 by region alone by combining the cumulative mortality data across replicates:
+
+```{r}
+mt_con_by_region <- mt_con %>%
+  filter(day_of_death >= 0) %>%
+  filter(day_of_death < 21) %>%
+  group_by(region, day_of_death) %>%
+  summarise(all_morts = sum(n_morts), total_n = sum(n_group)) %>%
+  mutate(cm_mort = cumsum(all_morts),
+         prop_mort = all_morts / total_n,
+         prop_cm_mort = cm_mort / total_n) %>%
+  mutate(day_of_death = day_of_death + 1) %>%
+  ungroup()
+```
+
+Now calculate the LT50:
+
+```{r}
+mt_con_combined_lt50 <- mt_con_by_region %>%
+  group_by(region) %>%
+  nest() %>%
+  mutate(lt_res = map(data, function(x) {
+  
+  # Run the analysis with each tank/region combination
+    LT_logit((cm_mort / total_n) ~ log10(day_of_death),
+      p = c(50),
+      weights = total_n,
+      data = x) %>%
+    mutate(region = region) %>%
+    select(region, everything())
+    
+  })) %>%
+  pull(lt_res) %>%
+  bind_rows()
+```
+
+Have a look at a summary of the results:
+
+```{r}
+ggplot(mt_con_combined_lt50, aes(x = region, color = region)) +
+  geom_point(aes(y = time)) +
+  geom_errorbar(aes(ymin = LCL, ymax = UCL), width = 0.25, linewidth = 1) +
+  ylim(0, 10) +
+  labs(y = "LT50")
+```
+
+This is the LT50 summarized by region (north/south).
+
+Save the data used to make this plot so it can be in its own markdown.
+
+```{r}
+saveRDS(mt_con_combined_lt50, file = here::here("data","derived","03_high_con_combined_lt50"))
+```
+
+# Stats
+
+```{r}
+mt_low %>%
+  filter(day_of_death==8)%>%
+  group_by(region) %>%
+  summarize(
+    mean_value=1-mean(prop_cm_mort),
+    sd_value=sd(prop_cm_mort)
+  )
+```
+
+```{r}
+mt_high %>%
+  filter(day_of_death==20)%>%
+  group_by(region) %>%
+  summarize(
+    mean_value=1-mean(prop_cm_mort),
+    sd_value=sd(prop_cm_mort)
+  )
+```
+
+```{r}
+mt_con %>%
+  filter(day_of_death==8)%>%
+  group_by(region) %>%
+  summarize(
+    mean_value=1-mean(prop_cm_mort),
+    sd_value=sd(prop_cm_mort)
+  )
+```
+
+```{r}
+mt_con %>%
+  filter(day_of_death==20)%>%
+  group_by(region) %>%
+  summarize(
+    mean_value=1-mean(prop_cm_mort),
+    sd_value=sd(prop_cm_mort)
+  )
+```
+
+

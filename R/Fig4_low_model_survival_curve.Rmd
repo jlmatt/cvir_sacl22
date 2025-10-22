@@ -1,0 +1,67 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(skimr)
+library(ecotox)
+library(survival)
+library(coxme)
+library(stats)
+library(AICcmodavg) # used this for the AICcmodavg function to calculate AICcs quickly
+library(janitor)
+library(broom)
+library(ehahelper) # used this for the tidy function to extract values out of coxme.  https://rdrr.io/github/junkka/ehahelper/
+library(survminer)
+library(ggplot2)
+```
+
+```{r}
+data <- readRDS(here::here("data","derived","IT_cox_low_results"))
+```
+
+```{r}
+c3_fixed <- readRDS(here::here("data","derived","c3_fixed"))
+```
+
+```{r}
+region_df <- with(data,
+               data.frame(region = c("N", "S"), 
+                          length_mm = rep(mean(length_mm, na.rm = TRUE), 2),
+                          growout_site = c("CCB", "CCB")
+                          )
+               )
+region_df
+```
+
+```{r}
+test<-survfit(c3_fixed, newdata = region_df)
+
+p1 <- ggsurvplot(test,data=region_df, conf.int=TRUE,legend.title="Region",legend.labs = c("N","S"), legend = "right", ggtheme = theme_gray(), palette=c("#00BFC4","#F8766D"),xlim=c(0,8), break.x.by=1, risk.table = TRUE)
+
+p1 <- p1$plot + theme(plot.title = element_text(hjust = 0.5)) +
+           theme_bw()+
+  labs(x= "Day") +
+  labs(y= "Survival Probability") +
+  theme(axis.text=element_text(size=13,color="black"),
+        axis.title=element_text(size=13),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border=element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(vjust=1.7),
+        axis.title.x = element_text(vjust=-0.2),
+        plot.title = element_text(size=13,vjust=1.5,hjust=0.5),
+        legend.text=element_text(size=13),
+        legend.title = element_text(size = 13),
+        strip.background = element_blank(),
+        strip.text = element_text(size=16))
+p1
+```
+
+```{r}
+ggsave(here::here("figures", "images", "Fig4_low_model_curve.png"), width = 6, height = 5, units = "in", p1)
+```
+
+```{r}
+
+```
+

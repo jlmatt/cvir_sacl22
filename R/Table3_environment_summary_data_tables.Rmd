@@ -1,0 +1,145 @@
+---
+title: "environment data tables"
+author: "Chris Hollenbeck"
+date: "2023-06-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(gt)
+```
+
+# Environmental data checks
+
+## Import
+
+Import the cleaned environmental data:
+
+```{r}
+env_dat <- read_rds(here::here("data", "derived", "env_dat_final.rds"))
+env_dat$treatment <- factor(env_dat$treatment, levels = c("L", "C", "H"))
+```
+
+```{r}
+xbar = paste("x", "\u0305", sep = "")
+```
+
+
+Environmental data should be from the time of the final salinities and temperatures being reached, which was 10/13/2022
+
+TEMP
+
+```{r}
+t <-env_dat %>%
+  filter(date > as.Date("2022-10-12")) %>%
+  group_by(treatment) %>%
+  summarize(
+    mean = mean(temp),
+    sd = round(sd(temp),digits=2)
+  )
+t
+
+```
+
+SAL
+
+```{r}
+s <-env_dat %>%
+  filter(date > as.Date("2022-10-12")) %>%
+  group_by(treatment) %>%
+  summarize(
+    mean = mean(salinity),
+    sd = round(sd(salinity),digits = 2)
+  )
+s
+```
+
+DO
+
+```{r}
+d <-env_dat %>%
+  filter(date > as.Date("2022-10-12")) %>%
+  group_by(treatment) %>%
+  summarize(
+    mean = mean(do),
+    sd = round(sd(do), digits = 2)
+  )
+d
+```
+
+pH
+
+```{r}
+p <-env_dat %>%
+  filter(date > as.Date("2022-10-12")) %>%
+  group_by(treatment) %>%
+  summarize(
+    mean = mean(ph),
+    sd = format(round(sd(ph), digits = 2), nsmall=2)
+  ) 
+p
+```
+
+
+Column bind all the data into one table 
+
+```{r}
+x <- bind_cols(t,s[,-1],d[,-1],p[,-1])
+
+colnames(x) <- c("Treatment","temp_x","temp_s","sal_x","sal_s","d_x","d_s","p_x","p_s")
+```
+
+Use gt table to re-name the columns
+
+```{r}
+t1 <- gt(x) %>%
+  text_replace(pattern = "L", replacement = "Low") %>%
+  text_replace(pattern = "C", replacement = "Control") %>%
+  text_replace(pattern = "H", replacement = "High") %>%
+  tab_spanner(
+    label = "Temperature (\u00B0C)",
+    columns = starts_with(c("temp_x","temp_s")),
+    level = 1
+  ) %>%
+    tab_spanner(
+    label = "Salinity",
+    columns = contains(c("sal_x","sal_s")),
+    level = 1
+  ) %>%
+    tab_spanner(
+    label = "DO (mg/L)",
+    columns = contains(c("d_x","d_s")),
+    level = 1
+  ) %>%
+    tab_spanner(
+    label = "pH",
+    columns = starts_with(c("p_x","p_s")),
+    level = 1
+  ) %>%
+  cols_label(temp_x = "x\u0305",
+             temp_s = "sd",
+             sal_x = "x\u0305",
+             sal_s = "sd",
+             d_x = "x\u0305",
+             d_s = "sd",
+             p_x = "x\u0305",
+             p_s = "sd"
+) %>%
+  fmt_number(
+    decimals = 2
+  ) %>%
+  cols_align(
+  align = "left",
+  columns = everything()
+) %>%
+  opt_horizontal_padding(scale=2.5)
+  
+t1
+```
+
+```{r,eval=FALSE}
+gtsave(t1, here::here("out","tbl","Table3_env_summary_data.png"))
+```
+

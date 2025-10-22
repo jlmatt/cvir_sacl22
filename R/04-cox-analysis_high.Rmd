@@ -1,0 +1,395 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(skimr)
+library(ecotox)
+library(survival)
+library(coxme)
+library(stats)
+#library(AICcmodavg) # used this for the AICcmodavg function to calculate AICcs quickly
+library(janitor)
+library(broom)
+#library(ehahelper) # used this for the tidy function to extract values out of coxme.  https://rdrr.io/github/junkka/ehahelper/
+#library(survminer)
+library(ggplot2)
+```
+
+# Data
+
+```{r}
+mort_dat <- read_rds(here::here("data", "derived", "mort_dat_final.rds"))
+```
+
+Create a new column in data frame for group (e.g., ULM-1, NNP-2)
+
+```{r}
+mort_dat <- mort_dat %>%
+  mutate(group = str_sub(batch, end = -5)) %>%
+  select(tag,group,batch,everything())
+```
+
+Create a new column in the data frame that represents "recovery."
+* Seems the low salinity treatment ended on 10/21/22 and high salinity treatment ended on 11/02/2022.
+* All animals in low treatment with death date on or before 10/21/22 will be considered "n" for recovery, all others in low treatment will get "y."
+* All animals in high treatment with death date on or before 11/02/22 will be considered "n" for recovery, all others in low treatment will get "y."
+
+```{r}
+mort_dat <- mort_dat %>%
+  mutate(recovery = if_else(death_date >= "2022-10-21" & treatment == "L","y",
+                    if_else(death_date >= "2022-11-02" & treatment == "H","y","n")))
+```
+
+Add in a censoring variable to data
+If oysters survived or died in recovery (recovery = "y"), then they are censored "1", otherwise they are given "2", coding for mortality. 
+
+```{r}
+mort_dat <- mort_dat %>%
+  mutate(censored = if_else(recovery == "y" | mortality == 0,1,2))
+```
+
+# Hypothesis Set
+
+Alternative Hypotheses
+
+Response: Days to Death (numeric)
+Unit: Inidividual
+r() indiciates random effect
+
+	  	i.  Region + r(Tank) 
+			ii. Region + r(Tank) + Site  
+			iii.Region + r(Tank) + Site + Length
+			iv. Region + r(Tank) + Site + Length + r(Group)
+			v.  Region + r(Tank) + Site + Region x Site
+			vi. Region + r(Tank) + Site + Region x Site + Length
+			vii. Region + r(Tank) + Site + Region X Site + Length + r(Group)
+
+# Data for Cox Models
+
+Only considering data from the start of the test salinities (day "0" and beyond)
+There are only a few, highly influential observations that occur before time 0.  Those mortalities are unlikely to be closely associated with the desired challenge.
+
+```{r}
+data <- mort_dat %>%
+  filter(treatment == "H") %>%
+  filter(day_of_death >= 0)
+```
+
+```{r}
+data$region<-as.factor(data$region)
+data$growout_site<-as.factor(data$growout_site)
+```
+
+```{r}
+data <- data %>%
+  mutate(region = fct_relevel(region,c("S","N"))) %>%
+  mutate(growout_site = fct_relevel(growout_site,c("CCB","COP")))
+```
+
+# Run Cox Models
+
+```{r}
+c1 <- coxme(Surv(day_of_death,censored) ~ region + (1|tank), 
+                 data = data)
+summary(c1)
+exp(.035)
+```
+
+```{r}
+c2 <- coxme(Surv(day_of_death,censored) ~ region + (1|tank) + growout_site, 
+                 data = data)
+summary(c2)
+```
+
+```{r}
+c3 <- coxme(Surv(day_of_death,censored) ~ region + (1|tank) + growout_site + length_mm,
+                 data = data)
+summary(c3)
+```
+
+```{r}
+c3_fixed <- coxph(Surv(day_of_death,censored) ~ region + growout_site + length_mm, data = data)
+summary(c3_fixed)
+```
+
+
+```{r}
+c4 <- coxme(Surv(day_of_death,censored) ~ region + (1|tank) + growout_site + length_mm + (1|group/region),
+                 data = data)
+summary(c4)
+```
+
+```{r}
+c5 <- coxme(Surv(day_of_death,censored) ~ region + (1|tank) + growout_site + region * growout_site, 
+                 data = data)
+
+summary(c5)
+
+c5_fixed <- coxph(Surv(day_of_death,censored) ~ region + growout_site + region * growout_site,
+                 data = data)
+
+summary(c5_fixed)
+```
+
+```{r}
+c6 <- coxme(Surv(day_of_death,censored) ~ region + (1|tank) + growout_site + region * growout_site + length_mm, 
+                 data = data)
+
+c6_fixed <- coxph(Surv(day_of_death,censored) ~ region + growout_site + region * growout_site + length_mm, 
+                 data = data)
+
+summary(c6)
+```
+
+```{r}
+c7 <- coxme(Surv(day_of_death,censored) ~ region + (1|tank) + growout_site + region * growout_site + length_mm + (1|group/region),
+                 data = data)
+summary(c7)
+```
+
+# Model Selection and Intepretation 
+
+```{r}
+models <- list(c1,c2,c3,c4,c5,c6,c7)
+
+aictab(models)
+
+high_models_parameters <- tibble(aictab(models))
+```
+
+Save data from models for making tables 
+
+```{r}
+saveRDS(high_models_parameters, file = here::here("data","derived","high_models_parameters"))
+```
+
+AICc calculated from:  AICc = AIC + 2k(k + 1) / (n - k - 1)
+where AIC = 2k - 2*Integrated Log Lik
+
+Best models are: 
+
+v. Region + r(Tank) + Site + Region x Site
+
+vi.  Region + r(Tank) + Site + Region x Site + Length
+
+i. Region + tank
+
+```{r}
+# Extract coefficients and other information from model A
+summary_A <- summary(c5)
+
+mort <- summary_A$n[1]
+total <- summary_A$n[2]
+
+c5_summary<-tidy(c5)
+c5_table <- c5_summary %>%
+  mutate(HR = exp(estimate)) %>%
+  mutate(HR.conf.low = exp(estimate - 1.96 * std.error)) %>%
+  mutate(HR.conf.high = exp(estimate + 1.96 * std.error)) %>%
+  select(term, estimate, std.error, conf.low, conf.high, HR, HR.conf.low, HR.conf.high, statistic, p.value)
+c5_table
+
+c5_r_effects<-as_tibble(ranef(c5)) %>%
+  rownames_to_column() %>%
+  rename(tank = rowname, coefficients = tank) %>%
+  mutate(hr = exp(coefficients))
+c5_r_effects
+```
+
+Save data for tables for best fitting model (m3) for a separate markdown
+
+```{r}
+saveRDS(mort, file = here::here("data","derived","06_best_model_high_mort"))
+
+saveRDS(total, file = here::here("data","derived","06_best_model_high_total"))
+
+saveRDS(c5_table, file = here::here("data","derived","05_best_model_high_fixed_effects"))
+
+saveRDS(c5_r_effects, file = here::here("data","derived","05_best_model_high_random_effects"))
+```
+
+
+Interpret model c5: 
+
+* The z values and p values show region x growout site has a significant effect on chance of survival, p = 0.04
+
+* How can we decipher this interaction?
+
+* The hazard ratio of the interaction is 2.133. I think this means that the south oysters from COP are expected to die twice as fast as the south oysters from CCB. 
+
+* Tank effects explain some variance. We see differences in hazard ratios among tanks (ranging from 0.8 to 1.16). 
+
+```{r}
+summary_B <- summary(c6)
+
+c6_summary<-tidy(c6)
+c6_table <- c6_summary %>%
+  mutate(HR = exp(estimate)) %>%
+  mutate(HR.conf.low = exp(estimate - 1.96 * std.error)) %>%
+  mutate(HR.conf.high = exp(estimate + 1.96 * std.error)) %>%
+  select(term, estimate, std.error, conf.low, conf.high, HR, HR.conf.low, HR.conf.high, statistic, p.value)
+
+c6_r_effects<-as_tibble(ranef(c6)) %>%
+  rownames_to_column() %>%
+  rename(tank = rowname, coefficients = tank) %>%
+  mutate(hr = exp(coefficients))
+c6_r_effects
+```
+
+Interpret model c6: 
+
+Pretty similar to model 5.  Length is not significant. 
+
+```{r}
+summary_C <- summary(c1)
+
+c1_summary<-tidy(c1)
+c1_table <- c1_summary %>%
+  mutate(HR = exp(estimate)) %>%
+  mutate(HR.conf.low = exp(estimate - 1.96 * std.error)) %>%
+  mutate(HR.conf.high = exp(estimate + 1.96 * std.error)) %>%
+  select(term, estimate, std.error, conf.low, conf.high, HR, HR.conf.low, HR.conf.high, statistic, p.value)
+
+c1_r_effects<-as_tibble(ranef(c1)) %>%
+  rownames_to_column() %>%
+  rename(tank = rowname, coefficients = tank) %>%
+  mutate(hr = exp(coefficients))
+c1_r_effects
+```
+
+Intepret model 1:
+
+Higher effect from region. Basic model
+
+# Diagnostics
+
+1) Proportional hazards assumption
+
+From Kuitunen et al. 2021: 
+
+"The fundamental assumption in the Cox model is that the hazards are proportional, which means that the relative hazard remains constant over time with different predictor or covariate levels."
+
+Look at the Schoenfel Residuals vs. time to examine this assumption. 
+
+Schoenfeld residuals measure the difference between the observed covariate values and their expected values at each event time for each individual in the dataset. When plotted against time, they indicate the effect of a covariate on the hazard rate over time. 
+
+We will use the fixed version of model three (c3_fixed) to examine residual to test the proportion hazard assumption.
+
+```{r}
+test<-cox.zph(c5_fixed)
+ggcoxzph(test)
+```
+
+The lines are completely flat.  I don't see any reason to doubt the assumption.
+
+2) Testing for non-linearity
+
+As with mutliple linear regression, we assume that a continuous variable has a linear effect on the response. We can test for that here by looking for patterns in the residuals:
+
+Testing non-linearity
+
+```{r}
+
+martingale_resid <- residuals(c6_fixed, type = "martingale")
+
+plot(data$length_mm, martingale_resid, xlab = "Continuous Covariate",
+     ylab = "Martingale Residuals", main = "Continuous Covariate vs. Martingale Residuals")
+
+lines(lowess(data$length_mm, martingale_resid), col = "red")
+```
+
+Looks pretty random, seems like the model captured the relationship 
+
+```{r}
+martingale_resid <- residuals(c6_fixed, type = "schoenfeld")
+
+data2 <- data %>% 
+       filter(treatment == "H") %>% 
+       filter(censored == 2) 
+
+plot(data2$length_mm, martingale_resid[,3], xlab = "Continuous Covariate",
+     ylab = "Martingale Residuals", main = "Continuous Covariate vs. Martingale Residuals")
+
+lines(lowess(data2$length_mm, martingale_resid[,3]), col = "red")
+```
+
+Look for Influential points
+
+```{r}
+t<-residuals(c5_fixed,type="deviance")
+
+plot(t)
+
+index <- 1: length(t)
+abline(h = 0, lty = 2)  # Add a reference line at y = 0
+
+# Fit and add a loess line
+loess_line <- loess(t ~ index, span = 0.6)
+lines(index, predict(loess_line), col = "red", lwd = 2)
+```
+
+Not many influential points here
+
+# Visualize results
+
+## First save data that is used for graphs
+
+```{r}
+saveRDS(data, file = here::here("data","derived","IT_cox_high_results"))
+```
+
+```{r}
+saveRDS(c5_fixed, file = here::here("data","derived","c5_fixed_high"))
+```
+
+
+Going to use the fixed effects only version of model 5 for visualizing results. I think the models have similar enough results to be used for this purpose. 
+
+Same code as in 04-cox_analysis_low.Rmd, except make a plot for each growout site to account for the interaction effect (the effect of region on hazard is dependent on growout site)
+
+## Region at CCB
+
+```{r}
+region_df <- with(data,
+               data.frame(region = c("N", "S"), 
+                          growout_site = c("CCB", "CCB")
+                          )
+               )
+region_df
+```
+
+```{r}
+test<-survfit(c5_fixed, newdata = region_df)
+
+hi_plot_CCB<-ggsurvplot(test,data=region_df, conf.int=TRUE, ggtheme=theme_bw(),legend.title="Regions",legend.labs = c("N","S"),palette=c("#00BFC4","#F8766D"),title="High Salinity Challenge - CCB Growout",xlim=c(0,20))
+hi_plot_CCB
+```
+
+Look at data used for the plot
+
+```{r}
+hi_plot_CCB[["plot"]][["data"]]
+```
+
+## Region at COP
+
+```{r}
+region_df <- with(data,
+               data.frame(region = c("N", "S"), 
+                          growout_site = c("COP", "COP")
+                          )
+               )
+region_df
+```
+
+```{r}
+test<-survfit(c5_fixed, newdata = region_df)
+
+hi_plot_COP<-ggsurvplot(test,data=region_df, conf.int=TRUE, ggtheme=theme_bw(),legend.title="Regions",legend.labs = c("N","S"),palette=c("#00BFC4","#F8766D"),title="High Salinity Challenge - COP Growout",xlim=c(0,20))
+hi_plot_COP
+```
+
+```{r}
+
+```
+
+

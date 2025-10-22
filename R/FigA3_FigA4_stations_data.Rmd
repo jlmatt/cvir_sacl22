@@ -1,0 +1,186 @@
+```{r}
+library(here)
+library(tidyverse)
+```
+
+Read in data from NERR and NOAA that is meant as a proxy for conditioins at COP and CCB. 
+
+COP data
+Station Code - MARCWWQ
+Dates: 06/01/2022 - 09/30/2022
+Data Type: water quality
+Type: Best available dataset
+
+CCB data
+Station TAQT2 - 8775296 - USS Lexington, TX
+
+
+```{r}
+cop <- read_csv(here::here("data","raw","cop_nerr_data.csv"), skip = 2) %>%
+  janitor::clean_names()
+
+ccb <- read_table(here::here("data","raw","ccb_noaa_data.txt")) %>%
+  janitor::clean_names() %>%
+  slice(-1) %>%
+  mutate(
+    date = make_datetime(
+      year = as.integer(number_yy),
+      month = as.integer(mm),
+      day = as.integer(dd),
+      hour = as.integer(hh),
+      min = as.integer(mm_2)
+    )) %>%
+  mutate(temp = as.numeric(wtmp)) %>%
+  mutate(temp = case_when(
+    temp > 50 ~ NA, 
+    TRUE ~ temp
+  )) %>%
+  filter(between(date, ymd("2022-06-01"), ymd("2022-10-01"))) %>%
+  mutate(temp = case_when(   # there are instances where unrealistic data is present, and just before it, the temperature jumps above 35.  removing any observations over 35 only removes these questionable data points
+    temp > 35 ~ NA,
+    TRUE ~ temp
+  )) %>%
+  mutate(site = "CCB")
+```
+
+```{r}
+cop_data <- cop %>%
+  mutate(sal = case_when(
+    grepl("CWD", f_sal) ~ NA,
+    TRUE ~ sal
+  )) %>%   # make questionable salinity data (according to metadata) NA
+  select(date_time_stamp,temp,sal) %>%
+  rename(date = date_time_stamp) %>%
+  mutate(date = mdy_hm(date)) %>%
+  mutate(
+    sal = case_when(
+      between(date, ymd("2022-07-26"), ymd("2022-08-11")) ~ NA_real_,
+      TRUE ~ sal
+    )
+  ) %>%
+  mutate(site = "COP")
+```
+
+```{r}
+ggplot(cop_data, aes(x = date, y = temp)) + 
+  geom_line()
+```
+
+```{r}
+ggplot(cop_data, aes(x = date, y = sal)) + 
+  geom_line()
+```
+
+```{r}
+ggplot(ccb, aes(x = date, y = temp)) + 
+  geom_line()
+```
+
+Nice! now plot the cop and ccb water temps together
+
+```{r}
+data <- bind_rows(cop_data, ccb)
+```
+
+Now average by day
+
+```{r}
+daily_avg <- data %>%
+  mutate(day = as.Date(date)) %>%             # convert to Date (drops time)
+  group_by(day,site) %>%
+  summarise(mean_temp = mean(temp, na.rm = TRUE))
+```
+
+
+```{r}
+p1<-ggplot(daily_avg, aes(x = day, y = mean_temp, color = site)) + 
+  geom_line() +
+  ylim(25,35) +
+  xlab("Date") +
+  ylab ("Mean Daily Temperature (°C)")+ 
+        theme_bw()+
+   theme(axis.text=element_text(size=13,color="black"),
+        axis.title=element_text(size=13),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border=element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(vjust=1.7),
+        axis.title.x = element_text(vjust=-0.2),
+        plot.title = element_text(size=13,vjust=1.5,hjust=0.5),
+        legend.text=element_text(size=13),
+        legend.title = element_text(size = 13),
+        strip.background = element_blank(),
+        strip.text = element_text(size=16))+
+  scale_color_manual(values=c('gray70','gray30')) + 
+  labs(color = "Site")
+p1
+```
+
+```{r, eval = FALSE}
+ggsave(here::here("out","fig","FigA3_temperature_monitoring_stations.png"), p1, width = 8, height = 5, units = "in")
+```
+
+```{r}
+cop_daily <- cop_data %>%
+  mutate(day = as.Date(date)) %>%             # convert to Date (drops time)
+  group_by(day,site) %>%
+  summarise(mean_sal = mean(sal, na.rm = TRUE))
+```
+
+```{r}
+p2<-ggplot(cop_daily, aes(x = day, y = mean_sal, color = site)) + 
+  geom_line() +
+  ylim(25,35) +
+  xlab("Date") +
+  ylab ("Mean Daily Salinity")+ 
+        theme_bw()+
+   theme(axis.text=element_text(size=13,color="black"),
+        axis.title=element_text(size=13),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border=element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(vjust=1.7),
+        axis.title.x = element_text(vjust=-0.2),
+        plot.title = element_text(size=13,vjust=1.5,hjust=0.5),
+        legend.text=element_text(size=13),
+        legend.title = element_text(size = 13),
+        strip.background = element_blank(),
+        strip.text = element_text(size=16))+
+  scale_color_manual(values=c('gray40')) + 
+  labs(color = "Growout site") +
+  theme(legend.position = "none")
+p2
+```
+
+```{r, eval = FALSE}
+ggsave(here::here("out","fig","FigA4_salinity_monitoring_stations.png"), p2, width = 8, height = 5, units = "in")
+```
+
+```{r}
+range(cop_data$sal, na.rm = TRUE)
+```
+
+```{r}
+data %>%
+  filter(between(date, ymd("2022-06-01"), ymd("2022-09-02"))) %>%
+  group_by(site) %>%
+  summarize(
+    mean_temp = mean(temp, na.rm = TRUE),
+    min_temp = min(temp, na.rm = TRUE),
+    max_temp = max(temp, na.rm = TRUE))
+```
+
+```{r}
+data %>%
+  filter(between(date, ymd("2022-06-01"), ymd("2022-09-02"))) %>%
+  group_by(site) %>%
+  summarize(
+    mean_sal = mean(sal, na.rm = TRUE),
+    min_sal = min(sal, na.rm = TRUE),
+    max_sal = max(sal, na.rm = TRUE))
+```
+
+
+

@@ -1,0 +1,91 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(gtExtras)
+```
+
+Read in model data
+
+```{r}
+#Low
+data_random_L <- readRDS(file = here::here("data","derived","04_best_model_low_random_effects"))
+
+#High
+data_random_H <- readRDS(file = here::here("data","derived","05_best_model_high_random_effects"))
+
+#Low Control
+data_random_LC <- readRDS(file = here::here("data","derived","06_best_model_control_low_random_effects")) 
+
+#High Control
+data_random_HC <- readRDS(file= here::here("data","derived","06_best_model_control_high_random_effects"))
+```
+
+RANDOM effects
+
+Maybe take out the estimate, std. error, conf, low, conf, high, just do the hazard ratios and be able to explain them
+
+```{r}
+#low
+data_l <- data_random_L %>%
+  mutate(hr = sprintf("%.2f", round(.$hr, 2))) %>%
+  select(tank, hr) %>%
+  rename(Tank = tank, HR = hr)
+
+
+#High
+data_h <- data_random_H %>%
+  mutate(hr = sprintf("%.2f", round(.$hr, 2))) %>%
+  select(tank, hr) %>%
+  rename(Tank = tank, HR = hr) %>%
+  mutate(HR = as.character(HR))
+
+#Low Control 
+data_lc <- data_random_LC %>%
+  mutate(hr = sprintf("%.2f", round(.$hr, 2))) %>%
+  select(tank, hr) %>%
+  rename(Tank = tank, HR = hr) %>%
+  mutate(HR = as.character(HR))
+
+#High Control 
+data_hc <- data_random_HC %>%
+  mutate(hr = sprintf("%.2f", round(.$hr, 2))) %>%
+  select(tank, hr) %>%
+  rename(Tank = tank, HR = hr) %>%
+  mutate(HR = as.character(HR))
+```
+
+Combine, put low on top
+
+```{r}
+data_ran <- bind_rows(data_l,data_h, data_lc, data_hc) %>%
+  mutate(group = c("Low","Low","Low","Low","High","High","High","High", "Low Control", "Low Control", "Low Control", "Low Control", "High Control", "High Control", "High Control", "High Control")) %>%
+  rename (`Tank Effect` = HR)
+```
+
+Make Table
+
+```{r}
+data <- data_ran %>%
+  pivot_wider(
+    names_from = group,
+    values_from = `Tank Effect`
+  )
+```
+
+
+```{r}
+t1 <- data %>%
+  gt() %>%
+  cols_label(
+    Tank = "Tank Replicate"
+  ) %>%
+  cols_align(
+  align = "left",
+  columns = everything())
+t1
+```
+
+```{r,eval=FALSE}
+gtsave(t1, here::here("out","tbl","TableA2_best_models_random_effects.png"))
+```
+

@@ -1,0 +1,170 @@
+---
+title: "survival curve from coxph modeling_HIGH"
+author: "Joey Matt"
+date: "2023-10-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(skimr)
+library(ecotox)
+library(survival)
+library(coxme)
+library(stats)
+#library(AICcmodavg) # used this for the AICcmodavg function to calculate AICcs quickly
+library(janitor)
+library(broom)
+#library(ehahelper) # used this for the tidy function to extract values out of coxme.  https://rdrr.io/github/junkka/ehahelper/
+library(survminer)
+library(ggplot2)
+```
+
+```{r}
+data <- readRDS(here::here("data","derived","IT_cox_high_results"))
+```
+
+```{r}
+c5_fixed <- readRDS(here::here("data","derived","c5_fixed_high"))
+```
+
+```{r}
+region_df <- with(data,
+               data.frame(region = c("N", "S"), 
+                          growout_site = c("CCB", "CCB")
+                          )
+               )
+region_df
+```
+
+Make plot with legend
+
+```{r}
+test<-survfit(c5_fixed, newdata = region_df)
+
+hi_plot_CCB<-ggsurvplot(test,data=region_df,title="CCB", conf.int=TRUE,legend.title="Region",legend.labs = c("N","S"), legend = "right", ggtheme = theme_gray(), palette=c("#00BFC4","#F8766D"),xlim=c(0,20),risk.table = TRUE)
+
+hi_plot_CCB <- hi_plot_CCB$plot + theme(plot.title = element_text(hjust = 0.5)) +   theme(legend.text=element_text(size=13)) + theme(legend.title = element_text(size = 13))
+  
+hi_plot_CCB
+```
+
+Extract legend
+
+```{r}
+legend <- ggpubr::get_legend(hi_plot_CCB)
+```
+
+Make plot without legend
+
+```{r}
+test<-survfit(c5_fixed, newdata = region_df)
+
+hi_plot_CCB<-ggsurvplot(test,data=region_df,title="CCB", ylab = "", conf.int=TRUE,legend.title="Region",legend.labs = c("N","S"), legend = "none", ggtheme = theme_gray(), palette=c("#00BFC4","#F8766D"),xlim=c(0,20),risk.table = TRUE)
+
+hi_plot_CCB <- hi_plot_CCB$plot + theme(plot.title = element_text(hjust = 0.5)) + 
+     theme_bw()+
+    labs(x="Day")+
+              theme(legend.position = "none")+
+  theme(axis.text=element_text(size=13,color="black"),
+        axis.title=element_text(size=13),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border=element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(vjust=1.7),
+        axis.title.x = element_text(vjust=-0.2),
+        plot.title = element_text(size=13,vjust=1.5,hjust=0.5),
+        legend.text=element_text(size=13),
+        strip.background = element_blank(),
+        strip.text = element_text(size=16))
+hi_plot_CCB
+```
+
+
+## Region at COP
+
+```{r}
+region_df <- with(data,
+               data.frame(region = c("N", "S"), 
+                          growout_site = c("COP", "COP")
+                          )
+               )
+region_df
+```
+
+```{r}
+test<-survfit(c5_fixed, newdata = region_df)
+
+hi_plot_COP <- ggsurvplot(test,data=region_df,title="COP", conf.int=TRUE,legend.title="Region",legend.labs = c("N","S"), legend = "none", ggtheme = theme_gray(), palette=c("#00BFC4","#F8766D"),xlim=c(0,20),risk.table = TRUE)
+
+hi_plot_COP <- hi_plot_COP$plot + theme(plot.title = element_text(hjust = 0.5)) +
+           theme_bw()+
+  labs(x="Day")+
+  labs(y = "Survival Probability")+
+            theme(legend.position = "none")+
+  theme(axis.text=element_text(size=13,color="black"),
+        axis.title=element_text(size=13),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border=element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title.y = element_text(vjust=1.7),
+        axis.title.x = element_text(vjust=-0.2),
+        plot.title = element_text(size=13,vjust=1.5,hjust=0.5),
+        legend.text=element_text(size=13),
+        strip.background = element_blank(),
+        strip.text = element_text(size=16))
+
+hi_plot_COP
+```
+
+The South animals fared better in the high salinity challenge when accounting for growout site.  The effect of region was dependent on growout site -- the difference in time to death was greater when animals were taken from CCB than COP. 
+
+Arrange the two ggsurvplots together
+
+```{r}
+splots <- list(hi_plot_CCB,hi_plot_COP)
+```
+
+```{r}
+library(gridExtra)
+p1 <- grid.arrange(hi_plot_COP,hi_plot_CCB,legend,nrow = 1, ncol = 3, widths = c(5,5,1))
+p1
+```
+
+```{r}
+library(grid)
+library(gridExtra)
+library(gtable)
+
+# ensure both plots are plain ggplot objects (you already did $plot + theme(...))
+p_cop <- hi_plot_COP
+p_ccb <- hi_plot_CCB
+
+# (optional but recommended) enforce identical axis limits so panel content is comparable
+lims <- coord_cartesian(xlim = c(0, 20), ylim = c(0, 1))
+p_cop <- p_cop + lims
+p_ccb <- p_ccb + lims
+
+# convert to gtables
+g1 <- ggplotGrob(p_cop)
+g2 <- ggplotGrob(p_ccb)
+
+# make their row heights identical
+max_heights <- grid::unit.pmax(g1$heights, g2$heights)
+g1$heights <- max_heights
+g2$heights <- max_heights
+
+# arrange with your legend
+p1<-grid.arrange(g1, g2, legend, nrow = 1, widths = c(5, 5, 1))
+
+```
+
+
+
+```{r}
+ggsave(here::here("figures", "images", "Fig5_high_model_curves.png"), width = 10, height = 5, units = "in", p1)
+```
+
